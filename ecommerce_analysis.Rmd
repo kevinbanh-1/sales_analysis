@@ -1,0 +1,263 @@
+---
+title: "2019 Electronic Sales Exploratory Data Analysis"
+author: "Kevin Banh"
+date: "2/22/2022"
+output:
+  rmdformats::downcute:
+    downcute_theme: "chaos"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Introduction
+
+We'll be looking at sales data for electronics for a store during the entirety of 2019. Some exploratory data analysis will be done to gain some insights on the data.
+
+The source of the data is https://github.com/KeithGalli/Pandas-Data-Science-Tasks/tree/master/SalesAnalysis/Sales_Data
+
+
+# Libraries
+
+```{r}
+# Data visualization
+library(ggplot2)
+library(RColorBrewer)
+library(ggtext)
+library(scales)
+
+# Data manipulation
+library(tidyverse)
+library(stringr)
+library(reshape)
+```
+
+
+# Data processing
+
+## Merging 12 months of data
+
+```{r}
+months <- c("January", "February", "March", "April", "May", "June", 
+            "July", "August", "September", "October", "November", "December")
+
+# Create an empty dataframe so we can append each month's data to
+df <- data.frame()
+
+for(i in months){
+  # Create a string for the data name of each month
+  data_name <- paste0("Sales_", i,"_2019.csv")
+  curr_df <- read.csv(data_name)
+  
+  # Append to our dataframe
+  df <- rbind(df, curr_df)
+}
+```
+
+## Data cleaning
+
+```{r}
+glimpse(df)
+```
+
+Some things to note - Price.Each should be a double variable, Quantity.Ordered should be a double, and we can benefit from separating the date and times of Order.Date.
+
+```{r}
+df <- df %>%
+  mutate(Month = substr(Order.Date, 1, 2), # Extract month from date
+         Month = as.integer(Month), # Convert to integer
+         Price.Each = as.double(Price.Each), 
+         Quantity.Ordered = as.integer(Quantity.Ordered),
+         Time = str_sub(Order.Date, -5, -4),
+         Time = as.integer(Time),
+         Order.ID = as.integer(Order.ID),
+         Sales = Price.Each*Quantity.Ordered, 
+         State = str_sub(Purchase.Address, -8, -7) # Get state portion of address
+          ) 
+
+glimpse(df)
+```
+
+Looks good! Now, let's try to handle any duplicate records.
+
+```{r}
+# Find duplicate records
+df %>%
+  group_by_all() %>%
+  filter(n() > 1) %>%
+  ungroup()
+
+# There's 1428 duplicate rows so let's just keep the distinct rows
+df <- df %>%
+  distinct()
+
+# Check for consistency how many rows are removed in case we messed up somewhere
+dim(df)
+
+# Let's test again to see if it worked
+df %>% 
+  group_by_all() %>%
+  filter(n() > 1) %>%
+  ungroup()
+```
+
+We get an empty table meaning there are no more duplicate records.
+
+
+Let's tackle any null values that are not spread across a whole record
+
+```{r}
+sum(is.na(df))
+```
+
+```{r}
+for(i in 1:dim(df)[2]){
+  count = 0
+  for(j in 1:dim(df)[1]){
+    if(is.na(df[j,i])){
+      count = count + 1
+    }
+  }
+  print(paste0(names(df)[i], ": ", count))
+}
+```
+
+Since we have **very few** NA values, we'll just delete them entirely especially since we cannot perform any kind of imputation on 
+the fields that contain them.
+
+```{r}
+df <- na.omit(df)
+```
+
+
+# Exploratory date analysis
+
+```{r}
+plot_settings <- function(x){
+  # x is a ggplot object
+  
+  x <- x + 
+      theme(legend.position = "none", 
+      axis.ticks.y = element_blank(),
+      axis.ticks.x = element_blank(),
+      panel.background = element_blank(),
+      axis.title.x = element_text(hjust = 0),
+      axis.title.y = element_text(hjust = 1),
+      axis.title = element_text(color = "#808080"),
+      plot.title = element_markdown(size = 17)) + 
+      scale_y_continuous(labels = comma) + 
+      scale_fill_manual(values = c("royalblue4", "#808080"))  + 
+      scale_fill_manual(values = c("royalblue4", "#808080"))
+  return(x)
+}
+```
+
+
+```{r}
+g <- df %>%
+  ggplot(aes(x = factor(Month), y = Sales, fill = factor(ifelse(Month == "12", "highlighted", "normal")))) + 
+  geom_bar(stat = "identity") + 
+  xlab("Month") + 
+  labs(title = "<b style='color:#808080'>Sales was at its
+    <b style='color:#27408b'>highest
+    <b style='color:#808080'>during
+    <b style='color:#27408b'>December</b>") + 
+  scale_fill_manual(values = c("royalblue4", "#808080"))
+
+plot_settings(g)
+```
+
+
+
+
+```{r}
+g2 <- df %>%
+  group_by(Product) %>%
+  summarize(Quantity.Ordered = sum(Quantity.Ordered)) %>%
+  arrange(desc(Quantity.Ordered)) %>%
+  top_n(10) %>%
+  ggplot(aes(x = factor(Product, levels = Product), y = Quantity.Ordered, 
+             fill = ifelse(Product == "AAA Batteries (4-pack)", "highlighted",
+                           ifelse(Product == "AA Batteries (4-pack)", "highlighted",
+                                  "normal")))) +
+    geom_bar(stat = "identity") + 
+    ylab("Quantity Ordered") + 
+    xlab("Product") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+    labs(title = "<b style='color:#27408b'>Batteries 
+         <b style='color:#808080'>are the top two most bought products</b>") +
+  scale_fill_manual(values = c("royalblue4", "#808080"))
+
+plot_settings(g2)
+
+
+
+```
+
+
+
+```{r}
+g3 <- df %>%
+  group_by(Product, Price.Each) %>%
+  summarize(Quantity.Ordered = sum(Quantity.Ordered)) %>%
+  arrange(desc(Quantity.Ordered)) %>%
+  head(10) %>%
+  ggplot(aes(x = factor(Product, levels = Product), y = Price.Each, 
+             fill = ifelse(Product == "AAA Batteries (4-pack)", "highlighted",
+                           ifelse(Product == "AA Batteries (4-pack)", "highlighted",
+                                  "normal")))) +
+    geom_bar(stat = "identity") + 
+    ylab("Price") + 
+    xlab("Product") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+    labs(title = "<b style='color:#808080'>The most bought items are among the 
+         <b style='color:#27408b'>cheapest</b>") +
+  scale_fill_manual(values = c("royalblue4", "#808080"))
+
+plot_settings(g3)
+```
+
+
+
+```{r}
+g4 <- df %>%
+  ggplot(aes(x = State, y = Quantity.Ordered,
+             fill = ifelse(State == "CA", "highlighted", "normal"))) + 
+  geom_bar(stat = "Identity") + 
+  ylab("Quantity Ordered") + 
+  labs(title = "<b style='color:#27408b'>California
+       <b style='color:#808080'>had the most products ordered</b>") + 
+  scale_fill_manual(values = c("royalblue4", "#808080"))
+plot_settings(g4)
+```
+
+
+```{r}
+g5 <- df %>%
+  group_by(Time) %>%
+  summarize(Quantity.Ordered = sum(Quantity.Ordered)) %>%
+  ggplot(aes(x = factor(Time, levels = Time), y = Quantity.Ordered)) + 
+  geom_smooth(method = "lm", formula = y ~ poly(x, 3), se = FALSE) + 
+  geom_line(aes(group = 1), color = "#808080", size = 1.5) + 
+  xlab("Time") + 
+  ylab("Quantity Ordered") + 
+  labs(title = "<b style='color:#27408b'>Noon 
+       <b style='color:#808080'>and 
+       <b style='color:#27408b'>evening 
+       <b style='color:#808080'>times are peak ordering times</b>")
+plot_settings(g5)
+```
+
+# Conclusion
+
+Through our EDA, we've been able to answer the following questions
+
+1. What part of the day had peak number of products sold?
+2. What state ordered the most products?
+3. What were the most popular items?
+4. What were the costs of those popular items?
+5. Which part of the month had the highest number of sales?
+
+Knowing the answers to these will help the business better target their consumers. For example, they should try focusing on a wide-range of products that have a low price and are useful to a wide range of audiences. AAA/AA batteries were the most bought items and were among the cheapest as well. Furthermore, they could target their California consumers more since they make up a vast chunk of the products bought. 
